@@ -1,0 +1,180 @@
+---
+title: "ETAPA 1 RETO"
+author: "Paola Díaz Arellano"
+date: "2026-09-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Introducción y Pregunta de Investigación
+Pregunta de investigación: ¿Cómo fue la proporción de lectores jóvenes (18-25 años) en los años 2020 y 2021 en México, comparándolos con 2019?
+
+Variables de interés:
+
+p2: ¿Usted acostumbra leer?
+p3_1: En los últimos 12 meses, ¿leyó LIBROS?
+p4: ¿Cuántos libros leyó en los últimos 12 meses?
+p5: ¿Cuál fue el motivo principal por el que leyó?
+p34_1 / p34_2: En su infancia, ¿sus padres/tutores lo llevaban a bibliotecas o librerías?
+h_lec: Hábito de lectura
+perslecl: Personas lectoras de libros, revistas o periódicos
+
+# 2. Lectura y Homogeneización de los Datos
+Se leen las tres bases de datos del MOLEC (2019, 2020 y 2021) atendiendo sus codificaciones de texto originales.
+```{r}
+# Lectura de los archivos anuales
+M19 <- read.csv("Datos_molec_2019-1.csv", fileEncoding = "UTF-8-BOM", stringsAsFactors = FALSE)
+M20 <- read.csv("Datos_molec_2020-1.csv", fileEncoding = "latin1",     stringsAsFactors = FALSE)
+M21 <- read.csv("Datos_molec_2021-1.CSV", fileEncoding = "latin1",     stringsAsFactors = FALSE)
+
+# Homogeneización de nombres de variables de 2019 respecto a 2020/2021
+names(M19)[names(M19) == "n_ren_ele"]  <- "n_ren_el"
+names(M19)[names(M19) == "cond_activ"] <- "cond_act"
+names(M19)[names(M19) == "l_formato"]  <- "l_format"
+names(M19)[names(M19) == "r_formato"]  <- "r_format"
+names(M19)[names(M19) == "p_formato"]  <- "p_format"
+names(M19)[names(M19) == "persleclrp"] <- "perslecl"
+```
+
+# 3. Limpieza y Calidad de los Datos
+Se convierten las respuestas numéricas en formato de texto o con espacios en blanco a formato numérico real y se estandarizan valores faltantes (NA).
+
+```{r}
+# Lista de variables a limpiar
+cols_interes <- c("edad", "factor", "p2", "p3_1", "p4", "p5", 
+                  "p34_1", "p34_2", "h_lec", "perslec", "perslecl")
+
+limpia_variables <- function(df) {
+  for (v in intersect(cols_interes, names(df))) {
+    df[[v]] <- suppressWarnings(as.numeric(trimws(as.character(df[[v]]))))
+  }
+  df
+}
+
+M19 <- limpia_variables(M19)
+M20 <- limpia_variables(M20)
+M21 <- limpia_variables(M21)
+
+# Asignación del año de levantamiento
+M19$anio_enc <- 2019
+M20$anio_enc <- 2020
+M21$anio_enc <- 2021
+```
+
+# 4. Integración de la Base Consolidada y Filtrado de Jóvenes
+Se seleccionan las variables relevantes, se concatenan las bases de los tres años y se aplica el filtro para acotar el análisis únicamente al grupo de jóvenes de 18 a 25 años.
+
+```{r}
+vars_sel <- c("anio_enc", "periodo", "entidad", "sexo", "edad", "nivel",
+              "p1", "p2", "p3_1", "p4", "p5", "p34_1", "p34_2", 
+              "h_lec", "perslec", "perslecl", "factor")
+
+MOLEC_ALL <- rbind(M19[, vars_sel], M20[, vars_sel], M21[, vars_sel])
+
+# Subconjunto exclusivo de Jóvenes (18 a 25 años)
+JOVENES <- subset(MOLEC_ALL, edad >= 18 & edad <= 25)
+
+# Tamaño de muestra por año
+table(JOVENES$anio_enc)
+```
+
+# 5. Análisis de la Pregunta de Investigación
+Para obtener estimaciones representativas de la población mexicana, se aplica el cálculo de porcentajes ponderados mediante la variable factor.
+
+```{r}
+# Función para calcular porcentajes ponderados
+pct_pond <- function(cond, base, factor) {
+  100 * sum(factor[base & (cond %in% TRUE)], na.rm = TRUE) / sum(factor[base], na.rm = TRUE)
+}
+```
+#5.1 Indicadores Principales de Lectura en Jóvenes (18–25 años)
+```{r}
+res_jovenes <- t(sapply(c(2019, 2020, 2021), function(a) {
+  d <- subset(JOVENES, anio_enc == a)
+  todos <- rep(TRUE, nrow(d))
+  
+  # Cálculo de indicadores
+  p_perslecl  <- pct_pond(d$perslecl == 1, todos, d$factor)
+  p_p2        <- pct_pond(d$p2 == 1, todos, d$factor)
+  p_p3_1      <- pct_pond(d$p3_1 == 1, todos, d$factor)
+  
+  # Promedio de libros leídos entre quienes leyeron al menos 1 libro (p4 > 0)
+  sub_libros  <- d[d$p4 > 0 & !is.na(d$p4), ]
+  mean_p4     <- weighted.mean(sub_libros$p4, sub_libros$factor, na.rm = TRUE)
+  
+  c("Lectores Libros/Rev/Per (perslecl %)" = p_perslecl,
+    "Acostumbra Leer (p2 %)"              = p_p2,
+    "Leyó Libros en 12m (p3_1 %)"         = p_p3_1,
+    "Promedio Libros Leídos (p4)"         = mean_p4)
+}))
+
+rownames(res_jovenes) <- c("2019", "2020", "2021")
+round(res_jovenes, 1)
+
+barplot(res_jovenes[, "Lectores Libros/Rev/Per (perslecl %)"],
+        main = "Proporción de Jóvenes Lectores (18-25 años) en México",
+        ylab = "Porcentaje (%)", xlab = "Año de Encuesta",
+        ylim = c(0, 100), col = c("steelblue", "darkblue", "red"))
+```
+
+#5.2 Motivo principal de lectura
+```{r}
+# --- 5.2 Motivo Principal de Lectura (p5) ---
+# Catálogo oficial INEGI para p5:
+# 1 = Literatura
+# 2 = Materia escolar / trabajo
+# 3 = Cultura general / superación
+# 4 = Religión
+# 5 = Gusto / entretenimiento
+
+motivos_anios <- sapply(c(2019, 2020, 2021), function(a) {
+  d <- subset(JOVENES, anio_enc == a & p3_1 == 1)
+  
+  c(
+    "Literatura (1)"               = pct_pond(d$p5 == 1, rep(TRUE, nrow(d)), d$factor),
+    "Estudio / Trabajo (2)"         = pct_pond(d$p5 == 2, rep(TRUE, nrow(d)), d$factor),
+    "Cultura General (3)"           = pct_pond(d$p5 == 3, rep(TRUE, nrow(d)), d$factor),
+    "Religión (4)"                  = pct_pond(d$p5 == 4, rep(TRUE, nrow(d)), d$factor),
+    "Gusto / Entretenimiento (5)"   = pct_pond(d$p5 == 5, rep(TRUE, nrow(d)), d$factor)
+  )
+})
+
+colnames(motivos_anios) <- c("2019", "2020", "2021")
+round(motivos_anios, 1)
+```
+
+# 5.3 Estímulo Lector en la Infancia (p34_1 y p34_2)
+
+Proporción de jóvenes a quienes sus padres o tutores llevaban a bibliotecas (p34_1 == 1) o librerías (p34_2 == 1).
+
+```{r}
+# --- 5.3 Estímulo Lector en la Infancia (p34_1 y p34_2) ---
+
+infancia_res <- t(sapply(c(2019, 2020, 2021), function(a) {
+  d <- subset(JOVENES, anio_enc == a)
+  
+  c(
+    "Bibliotecas o Librerías (p34_1 %)" = pct_pond(d$p34_1 == 1, rep(TRUE, nrow(d)), d$factor),
+    "Veía a Tutores Leer (p34_2 %)"     = pct_pond(d$p34_2 == 1, rep(TRUE, nrow(d)), d$factor)
+  )
+}))
+
+rownames(infancia_res) <- c("2019", "2020", "2021")
+round(infancia_res, 1)
+```
+
+```{r}
+write.csv(JOVENES, "Datos_MOLEC_Jovenes_18_25.csv", row.names = FALSE)
+```
+
+
+Evolución del porcentaje de lectores jóvenes: En 2019, el 77.8% de los jóvenes de 18 a 25 años leía libros, revistas o periódicos (perslecl). En febrero de 2020 esta cifra subió ligeramente a 80.4%, pero en febrero de 2021 registró un descenso situándose en 75.8%.
+
+Lectura de Libros (p3_1): La proporción de jóvenes que leyó al menos un libro en los últimos 12 meses se mantuvo estable a lo largo de los tres años (58.9% en 2019, 60.8% en 2020 y 59.1% en 2021).
+
+Intensidad de lectura (p4): Entre aquellos jóvenes que sí leen libros, el número promedio de libros leídos al año aumentó significativamente durante la pandemia, pasando de 3.9 libros en 2019 a 4.8 libros en 2021.
+```
+
