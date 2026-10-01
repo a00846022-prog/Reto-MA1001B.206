@@ -65,7 +65,7 @@ M21$anio_enc <- 2021
 ```
 
 # 4. Integración de variables entre si
-Se seleccionan las variables relevantes, se concatenan las bases de los tres años y se aplica el filtro para acotar el análisis únicamente al grupo de jóvenes de 18 a 25 años.
+Se seleccionan las variables relevantes, se rrlacionan las bases de los tres años y se aplica el filtro para hacer el análisis únicamente al grupo de jóvenes de 18 a 25 años.
 
 ```{r}
 vars_sel <- c("anio_enc", "periodo", "entidad", "sexo", "edad", "nivel",
