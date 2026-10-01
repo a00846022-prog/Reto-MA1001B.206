@@ -1,0 +1,140 @@
+---
+title: "ETAPA 1 DEL RETO"
+author: 'EQUIPO #'
+date: "2026-10-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Introducción
+Pregunta de investigación: ¿Cómo fue la proporción y el comportamiento de lectores jóvenes (18-25 años) en los años 2020 y 2021 en México, comparándolos con 2019?
+
+Variables de interés seleccionadas:
+
+edad: Edad de la persona (Cuantitativa)
+p2: ¿Usted acostumbra leer? (Cualitativa)
+p3_1: En los últimos 12 meses, ¿leyó LIBROS? (Cualitativa)
+p4: ¿Cuántos libros leyó en los últimos 12 meses? (Cuantitativa discreta)
+p5: ¿Cuál fue el motivo principal por el que leyó? (Cualitativa)
+p8: Formato de los libros (digital o impreso)
+p14: Formato de las revistas (digital o impreso)
+p26: Minutos continuos que lee algún material (Cuantitativa continua)
+h_lec: Hábito de lectura
+perslec / perslecl: Condición de persona lectora
+
+# 2. Lectura de datos
+Se leen las tres bases de datos del MOLEC (2019, 2020 y 2021) atendiendo sus codificaciones de texto originales.
+```{r}
+# Lectura de los archivos anuales
+M19 <- read.csv("Datos_molec_2019-1.csv", fileEncoding = "UTF-8-BOM", stringsAsFactors = FALSE)
+M20 <- read.csv("Datos_molec_2020-1.csv", fileEncoding = "latin1",     stringsAsFactors = FALSE)
+M21 <- read.csv("Datos_molec_2021-1.CSV", fileEncoding = "latin1",     stringsAsFactors = FALSE)
+
+# Homogeneización de nombres de variables
+names(M19)[names(M19) == "n_ren_ele"]  <- "n_ren_el"
+names(M19)[names(M19) == "cond_activ"] <- "cond_act"
+names(M19)[names(M19) == "l_formato"]  <- "l_format"
+names(M19)[names(M19) == "r_formato"]  <- "r_format"
+names(M19)[names(M19) == "p_formato"]  <- "p_format"
+names(M19)[names(M19) == "persleclrp"] <- "perslecl"
+```
+
+# 3. Limpieza de lso datos
+Se convierten las respuestas numéricas en formato de texto o con espacios en blanco a formato numérico real y se estandarizan valores faltantes (NA).
+
+```{r}
+cols_interes <- c("edad", "factor", "p2", "p3_1", "p4", "p5", "p8", "p14", "p26",
+                  "p34_1", "p34_2", "h_lec", "perslec", "perslecl")
+
+limpia_variables <- function(df) {
+  for (v in intersect(cols_interes, names(df))) {
+    df[[v]] <- suppressWarnings(as.numeric(trimws(as.character(df[[v]]))))
+  }
+  df
+}
+M19 <- limpia_variables(M19)
+M20 <- limpia_variables(M20)
+M21 <- limpia_variables(M21)
+
+M19$anio_enc <- 2019
+M20$anio_enc <- 2020
+M21$anio_enc <- 2021
+```
+
+# 4. Integración de variables entre si
+Se seleccionan las variables relevantes, se concatenan las bases de los tres años y se aplica el filtro para acotar el análisis únicamente al grupo de jóvenes de 18 a 25 años.
+
+```{r}
+vars_sel <- c("anio_enc", "periodo", "entidad", "sexo", "edad", "nivel",
+              "p1", "p2", "p3_1", "p4", "p5", "p8", "p14", "p26",
+              "p34_1", "p34_2", "h_lec", "perslec", "perslecl", "factor")
+
+MOLEC_ALL <- rbind(M19[, vars_sel], M20[, vars_sel], M21[, vars_sel])
+
+JOVENES <- subset(MOLEC_ALL, edad >= 18 & edad <= 25)
+
+table(JOVENES$anio_enc)
+```
+
+# 5. Análisis de la pregunta
+Para obtener estimaciones representativas de la población mexicana, se aplica el cálculo de porcentajes ponderados mediante la variable factor.
+
+```{r}
+pct_pond <- function(cond, base, factor) {
+  100 * sum(factor[base & (cond %in% TRUE)], na.rm = TRUE) / sum(factor[base], na.rm = TRUE)
+}
+```
+
+#5.1 Indicadores generales de tiempo continuo de lectura
+```{r}
+res_jovenes <- t(sapply(c(2019, 2020, 2021), function(a) {
+  d <- subset(JOVENES, anio_enc == a)
+  todos <- rep(TRUE, nrow(d))
+
+  p_perslecl  <- pct_pond(d$perslecl == 1, todos, d$factor)
+  p_p2        <- pct_pond(d$p2 == 1, todos, d$factor)
+  p_p3_1      <- pct_pond(d$p3_1 == 1, todos, d$factor)
+
+  sub_libros  <- d[d$p4 > 0 & !is.na(d$p4), ]
+  mean_p4     <- weighted.mean(sub_libros$p4, sub_libros$factor, na.rm = TRUE)
+
+  sub_p26     <- d[d$p26 > 0 & !is.na(d$p26), ]
+  mean_p26    <- weighted.mean(sub_p26$p26, sub_p26$factor, na.rm = TRUE)
+  
+  c("Lectores (perslecl %)"            = p_perslecl,
+    "Acostumbra Leer (p2 %)"           = p_p2,
+    "Leyó Libros 12m (p3_1 %)"         = p_p3_1,
+    "Promedio Libros (p4)"            = mean_p4,
+    "Prom. Minutos Continuos (p26)"    = mean_p26)
+}))
+
+rownames(res_jovenes) <- c("2019", "2020", "2021")
+round(res_jovenes, 1)
+```
+
+#5.2 Formto de libros leidos
+```{r}
+)
+formato_libros <- sapply(c(2019, 2020, 2021), function(a) {
+  d <- subset(JOVENES, anio_enc == a & p3_1 == 1)
+  
+  c(
+    "Digital (1)" = pct_pond(d$p8 == 1, rep(TRUE, nrow(d)), d$factor),
+    "Impreso (2)" = pct_pond(d$p8 == 2, rep(TRUE, nrow(d)), d$factor),
+    "Ambos (3)"   = pct_pond(d$p8 == 3, rep(TRUE, nrow(d)), d$factor)
+  )
+})
+
+colnames(formato_libros) <- c("2019", "2020", "2021")
+round(formato_libros, 1)
+```
+
+```{r}
+write.csv(JOVENES, "Datos_MOLEC_Jovenes_18_25.csv", row.names = FALSE)
+```
+
+```
+
