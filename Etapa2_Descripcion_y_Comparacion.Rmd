@@ -1,6 +1,6 @@
 ---
 title: "Etapa 2 - Descripción individual y comparación de variables"
-author: "Virginia Garza Rodríguez"
+author: "EQUIPO 1"
 date: "2026-10-08"
 output: word_document
 ---
