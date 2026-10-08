@@ -1,0 +1,726 @@
+---
+title: "Etapa 2 - Descripción individual y comparación de variables"
+author: "Virginia Garza Rodríguez"
+date: "2026-10-08"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 7, fig.height = 4)
+if (requireNamespace("printr", quietly = TRUE)) library(printr)
+library(e1071)   # skewness() y kurtosis(). Instalar una vez: install.packages("e1071")
+```
+
+Pregunta de investigación (Etapa 1): ¿Cómo fue la proporción de lectores jóvenes de 18 a 25 años entre 2019, 2020 y 2021, y qué cambios se observaron en sus hábitos de lectura?
+
+# Preparación de los datos
+
+## Lectura de la base
+
+La base ya contiene solo a los jóvenes de 18 a 25 años de MOLEC 2019, 2020 y 2021. Debe estar en la misma carpeta que este .Rmd.
+
+```{r lectura}
+library(readxl)
+
+# Leemos el archivo .xlsx directamente a la variable JOVENES
+JOVENES <- read_excel("BASEDEDATOSLIMPIA.xlsx")
+
+dim(JOVENES)            # 808 registros y 19 variables
+names(JOVENES)
+sapply(JOVENES, class)  # Muestra los tipos de datos
+
+```
+
+## Nombres cortos de las variables
+
+
+```{r nombres}
+nombres <- c(
+  Anio_Encuesta             = "anio",
+  Edad                      = "edad",
+  Acostumbra_Leer_p2        = "p2",
+  Leyo_Libros_p3_1          = "p3_1",
+  Leyo_Revistas_p3_2        = "p3_2",
+  Leyo_Periodicos_p3_3      = "p3_3",
+  Leyo_Historietas_p3_4     = "p3_4",
+  Leyo_Internet_p3_5        = "p3_5",
+  Cant_Libros_p4            = "p4",
+  Libro_Digital_p8_1        = "p8_1",
+  Cant_Revistas_p10         = "p10",
+  Revista_Digital_p14_1     = "p14_1",
+  Cant_Periodicos_p16       = "p16",
+  Periodico_Digital_p20_1   = "p20_1",
+  Historieta_Digital_p23_1  = "p23_1",
+  Minutos_Lectura_p26       = "p26",
+  Habito_Lectura_h_lec      = "h_lec",
+  Condicion_Lectora_perslec = "perslec",
+  Factor_Expansion          = "factor"
+)
+
+names(JOVENES) <- nombres[names(JOVENES)]
+stopifnot(!anyNA(names(JOVENES)))
+names(JOVENES)
+```
+
+## Datos faltantes y su codificación
+
+En esta base el **0** significa *blanco por pase*: la pregunta no le aplicaba a la persona (por ejemplo, quien no leyó libros no contesta `p4`). El 0 **no** es un valor real, así que se convierte a `NA`. Las variables `anio`, `edad` y `factor` no tienen blancos.
+
+```{r faltantes}
+vars_blanco <- setdiff(names(JOVENES), c("anio", "edad", "factor"))
+
+# Cuántos ceros (blancos) hay por variable antes de limpiar
+sapply(JOVENES[, vars_blanco], function(x) sum(x == 0, na.rm = TRUE))
+
+# Convertimos los ceros (blancos por pase) a NA
+for (v in vars_blanco) {
+  JOVENES[[v]][JOVENES[[v]] %in% 0] <- NA
+}
+
+# Después de limpiar: confirmamos la cantidad de NA
+colSums(is.na(JOVENES[, vars_blanco]))
+
+# Tamaño de muestra por año
+table(JOVENES$anio)
+
+# Rangos de las variables cuantitativas
+sapply(JOVENES[, c("edad", "p4", "p10", "p16", "p26")], range, na.rm = TRUE)
+```
+
+Los 4 jóvenes sin respuesta en `p2` (1 en 2020 y 3 en 2021) quedan con `NA` en las preguntas de lectura. No cuentan en el denominador de los porcentajes. Los demás `NA` son estructurales (por ejemplo, quien no leyó libros no tiene `p4`).
+
+## Variables con etiquetas y grupo de edad
+
+```{r etiquetas}
+si_no <- function(x) factor(x, levels = 1:2, labels = c("Sí", "No"))
+
+JOVENES$anio_f    <- factor(JOVENES$anio)
+JOVENES$grupo_edad <- cut(JOVENES$edad, breaks = c(17, 21, 25), labels = c("18-21", "22-25"))
+
+JOVENES$p2_f   <- si_no(JOVENES$p2)     # ¿Acostumbra leer?
+JOVENES$p3_1_f <- si_no(JOVENES$p3_1)   # ¿Leyó libros?
+JOVENES$p3_2_f <- si_no(JOVENES$p3_2)   # ¿Leyó revistas?
+JOVENES$p3_3_f <- si_no(JOVENES$p3_3)   # ¿Leyó periódicos?
+JOVENES$p3_4_f <- si_no(JOVENES$p3_4)   # ¿Leyó historietas?
+JOVENES$p3_5_f <- si_no(JOVENES$p3_5)   # ¿Leyó en internet?
+
+# Formato digital (1 = leyó en formato digital, 2 = no). Solo para quienes leyeron ese material
+JOVENES$p8_1_f  <- si_no(JOVENES$p8_1)   # libros
+JOVENES$p14_1_f <- si_no(JOVENES$p14_1)  # revistas
+JOVENES$p20_1_f <- si_no(JOVENES$p20_1)  # periódicos
+JOVENES$p23_1_f <- si_no(JOVENES$p23_1)  # historietas
+
+# Hábito de lectura: ordinal, de más a menos hábito
+JOVENES$h_lec_f <- factor(JOVENES$h_lec, levels = 1:4, ordered = TRUE,
+                          labels = c("1 Acostumbra (MOLEC)", "2 Acostumbra (otros)",
+                                     "3 No acostumbra, leyó", "4 No acostumbra, no leyó"))
+
+JOVENES$perslec_f <- factor(JOVENES$perslec, levels = 1:2, labels = c("Lector", "No lector"))
+```
+
+## Funciones de apoyo
+
+```{r funciones}
+anios   <- c(2019, 2020, 2021)
+colores <- c("#4E79A7", "#F28E2B", "#59A14F")   # un color por año
+
+# ---- Moda (primer valor si hay empate) ----
+moda <- function(x) {
+  t <- table(x)
+  as.numeric(names(t)[t == max(t)][1])
+}
+
+# ---- Medidas de una variable cuantitativa ----
+# Rango medio = (máximo + mínimo) / 2 ; CV = desviación estándar / media (en %)
+# En e1071 la curtosis es "exceso de curtosis": 0 = curtosis de una normal
+medidas <- function(x) {
+  x <- x[!is.na(x)]
+  c(n           = length(x),
+    Minimo      = min(x),
+    Q1          = quantile(x, 0.25, names = FALSE),
+    Mediana     = median(x),
+    Media       = mean(x),
+    Moda        = moda(x),
+    Q3          = quantile(x, 0.75, names = FALSE),
+    Maximo      = max(x),
+    Rango_medio = (max(x) + min(x)) / 2,
+    Rango       = max(x) - min(x),
+    RIC         = IQR(x),
+    Desv_est    = sd(x),
+    CV_pct      = 100 * sd(x) / mean(x),
+    Sesgo       = skewness(x),
+    Curtosis    = kurtosis(x))
+}
+
+# Medidas de una variable, una columna por año
+resumen_cuant <- function(var) {
+  round(sapply(split(JOVENES[[var]], JOVENES$anio_f), medidas), 2)
+}
+
+# Valores inusuales según el criterio del boxplot (1.5 x RIC)
+inusuales <- function(var) {
+  lapply(split(JOVENES[[var]], JOVENES$anio_f),
+         function(x) sort(boxplot.stats(x[!is.na(x)])$out))
+}
+
+# Histogramas por año con la misma escala
+hist_anios <- function(var, br, xlab, titulo) {
+  x <- JOVENES[[var]]
+  ymax <- max(sapply(anios, function(a)
+    max(hist(x[JOVENES$anio == a], breaks = br, plot = FALSE)$counts)))
+  par(mfrow = c(1, 3))
+  for (i in 1:3) {
+    hist(x[JOVENES$anio == anios[i]], breaks = br, col = colores[i],
+         ylim = c(0, ymax), xlab = xlab, ylab = "Frecuencia",
+         main = paste(titulo, anios[i]))
+  }
+  par(mfrow = c(1, 1))
+}
+
+# Tablas de una variable cualitativa (con etiquetas), por año:
+# frecuencia, % de la muestra y % ponderado con el factor de expansión
+tab_cual <- function(x_f) {
+  anio <- JOVENES$anio_f
+  n    <- table(x_f, anio)
+  pct  <- round(100 * prop.table(n, 2), 1)
+  pond <- round(100 * prop.table(xtabs(JOVENES$factor ~ x_f + anio), 2), 1)
+  nombres <- c("Categoría", "Año")
+  names(dimnames(n))    <- nombres
+  names(dimnames(pct))  <- nombres
+  names(dimnames(pond)) <- nombres
+  list(Frecuencia = n, Porcentaje = pct,
+       Porcentaje_ponderado = pond, n_validos = colSums(n))
+}
+
+# Barras agrupadas por año (porcentajes)
+graf_cual <- function(tab_pct, titulo) {
+  barplot(tab_pct, beside = TRUE, col = hcl.colors(nrow(tab_pct), "Set 2"),
+          main = titulo, ylab = "Porcentaje (%)", xlab = "Año",
+          ylim = c(0, max(tab_pct) * 1.3),
+          legend.text = rownames(tab_pct),
+          args.legend = list(x = "top", cex = 0.7, bty = "n", ncol = 2))
+}
+
+# Proporción de personas con x == valor, por año (entre quienes tienen dato válido)
+# Pct = % de la muestra ; Pct_pond = % ponderado ; IC 95 % de la muestra (sin ponderar)
+indicador <- function(x, valor = 1) {
+  res <- t(sapply(setNames(anios, anios), function(a) {
+    i  <- JOVENES$anio == a & !is.na(x)
+    n  <- sum(i)
+    k  <- sum(x[i] == valor)
+    p  <- k / n
+    pp <- sum(JOVENES$factor[i & x %in% valor]) / sum(JOVENES$factor[i])
+    e  <- 1.96 * sqrt(p * (1 - p) / n)
+    c(n_validos = n, n_si = k, Pct = 100 * p, Pct_pond = 100 * pp,
+      IC_inf = 100 * max(0, p - e), IC_sup = 100 * min(1, p + e))
+  }))
+  round(res, 1)
+}
+
+# Medidas de una variable numérica por combinación de grupos (por ejemplo año y grupo de edad)
+medidas_grupos <- function(var, ...) {
+  g <- interaction(..., sep = " | ", drop = TRUE)
+  res <- sapply(split(JOVENES[[var]], g), function(x) {
+    x <- x[!is.na(x)]
+    if (length(x) == 0) return(rep(NA_real_, 7))
+    c(length(x), mean(x), median(x), sd(x), IQR(x), min(x), max(x))
+  })
+  rownames(res) <- c("n", "Media", "Mediana", "DE", "RIC", "Minimo", "Maximo")
+  round(t(res), 2)
+}
+
+# Gráfica de líneas: M es una matriz con un renglón por año y una columna por serie
+lineas <- function(M, ylab, titulo, ylim = NULL) {
+  if (is.null(ylim)) ylim <- c(0, max(M, na.rm = TRUE) * 1.15)
+  matplot(anios, M, type = "b", pch = 19, lty = 1, lwd = 2,
+          col = hcl.colors(ncol(M), "Set 2"), xaxt = "n",
+          xlab = "Año", ylab = ylab, main = titulo, ylim = ylim)
+  axis(1, at = anios)
+  legend("topright", legend = colnames(M), col = hcl.colors(ncol(M), "Set 2"),
+         pch = 19, lty = 1, cex = 0.7, bty = "n")
+}
+```
+
+# PRIMERA PARTE: Descripción individual de las variables
+
+Las medidas se calculan **por año**, sin ponderar, como en los ejemplos de la maestra. Los `NA` se excluyen y la fila `n` indica cuántos datos válidos hay en cada año.
+
+## Variables cuantitativas
+
+### Edad (`edad`)
+
+```{r edad_medidas}
+resumen_cuant("edad")
+table(JOVENES$edad, JOVENES$anio_f)
+inusuales("edad")
+```
+
+```{r edad_graficos}
+boxplot(edad ~ anio_f, data = JOVENES, horizontal = TRUE, col = colores,
+        xlab = "Edad (años)", ylab = "Año", main = "Edad de los jóvenes")
+hist_anios("edad", br = seq(17.5, 25.5, by = 1), xlab = "Edad (años)", titulo = "Edad")
+```
+
+### Número de libros leídos en 12 meses (`p4`)
+
+Describe a los **lectores de libros** (quien no leyó libros no contesta `p4`).
+
+```{r p4_medidas}
+resumen_cuant("p4")
+inusuales("p4")
+```
+
+```{r p4_graficos}
+boxplot(p4 ~ anio_f, data = JOVENES, horizontal = TRUE, col = colores,
+        xlab = "Libros leídos en 12 meses", ylab = "Año",
+        main = "Libros leídos (lectores de libros)")
+
+hist_anios("p4", br = seq(0, ceiling(max(JOVENES$p4, na.rm = TRUE) / 5) * 5, by = 5),
+           xlab = "Libros leídos", titulo = "Libros")
+
+# Sin valores extremos, para ver mejor el centro de la distribución
+boxplot(p4 ~ anio_f, data = JOVENES, horizontal = TRUE, col = colores, outline = FALSE,
+        xlab = "Libros leídos (sin valores extremos)", ylab = "Año",
+        main = "Libros leídos (sin outliers)")
+```
+
+### Número de revistas leídas (`p10`)
+
+Describe a los **lectores de revistas**.
+
+```{r p10_medidas}
+resumen_cuant("p10")
+inusuales("p10")
+```
+
+```{r p10_graficos}
+boxplot(p10 ~ anio_f, data = JOVENES, horizontal = TRUE, col = colores,
+        xlab = "Revistas leídas", ylab = "Año", main = "Revistas leídas (lectores de revistas)")
+
+hist_anios("p10", br = seq(0, ceiling(max(JOVENES$p10, na.rm = TRUE) / 5) * 5, by = 5),
+           xlab = "Revistas leídas", titulo = "Revistas")
+
+boxplot(p10 ~ anio_f, data = JOVENES, horizontal = TRUE, col = colores, outline = FALSE,
+        xlab = "Revistas leídas (sin valores extremos)", ylab = "Año",
+        main = "Revistas leídas (sin outliers)")
+```
+
+### Número de periódicos leídos (`p16`)
+
+Describe a los **lectores de periódicos**.
+
+```{r p16_medidas}
+resumen_cuant("p16")
+inusuales("p16")
+```
+
+```{r p16_graficos}
+boxplot(p16 ~ anio_f, data = JOVENES, horizontal = TRUE, col = colores,
+        xlab = "Periódicos leídos", ylab = "Año", main = "Periódicos leídos (lectores de periódicos)")
+
+hist_anios("p16", br = seq(0, ceiling(max(JOVENES$p16, na.rm = TRUE) / 5) * 5, by = 5),
+           xlab = "Periódicos leídos", titulo = "Periódicos")
+
+boxplot(p16 ~ anio_f, data = JOVENES, horizontal = TRUE, col = colores, outline = FALSE,
+        xlab = "Periódicos leídos (sin valores extremos)", ylab = "Año",
+        main = "Periódicos leídos (sin outliers)")
+```
+
+### Minutos continuos de lectura (`p26`)
+
+Describe a las personas que leen algún material.
+
+```{r p26_medidas}
+resumen_cuant("p26")
+inusuales("p26")
+```
+
+```{r p26_graficos}
+boxplot(p26 ~ anio_f, data = JOVENES, horizontal = TRUE, col = colores,
+        xlab = "Minutos continuos de lectura", ylab = "Año",
+        main = "Minutos continuos de lectura")
+
+hist_anios("p26", br = seq(0, ceiling(max(JOVENES$p26, na.rm = TRUE) / 30) * 30, by = 30),
+           xlab = "Minutos", titulo = "Minutos")
+```
+
+### Gráficos de dispersión
+
+`edad`, `p4` y `p26` toman valores enteros que se repiten, así que se usa `jitter` para separar los puntos.
+
+```{r dispersion}
+col_anio <- adjustcolor(colores[match(JOVENES$anio, anios)], alpha.f = 0.6)
+
+par(mfrow = c(1, 2))
+plot(jitter(JOVENES$edad), jitter(JOVENES$p4), col = col_anio, pch = 19,
+     xlab = "Edad", ylab = "Libros leídos", main = "Edad y libros leídos")
+legend("topright", legend = anios, col = colores, pch = 19, cex = 0.7, bty = "n")
+plot(jitter(JOVENES$p4), jitter(JOVENES$p26), col = col_anio, pch = 19,
+     xlab = "Libros leídos", ylab = "Minutos continuos", main = "Libros y minutos")
+par(mfrow = c(1, 1))
+```
+
+## Variables cualitativas
+
+Para cada variable se muestran la **frecuencia**, el **porcentaje de la muestra** y el **porcentaje ponderado** con `factor`. Los porcentajes se calculan **dentro de cada año** (cada columna suma 100).
+
+### ¿Acostumbra leer? (`p2`)
+
+```{r p2}
+T_p2 <- tab_cual(JOVENES$p2_f)
+T_p2
+graf_cual(T_p2$Porcentaje, "¿Acostumbra leer?")
+```
+
+### Material leído en los últimos 12 meses (`p3_1` a `p3_5`)
+
+```{r p3_1}
+T_p3_1 <- tab_cual(JOVENES$p3_1_f)
+T_p3_1
+graf_cual(T_p3_1$Porcentaje, "¿Leyó libros?")
+```
+
+```{r p3_2}
+T_p3_2 <- tab_cual(JOVENES$p3_2_f)
+T_p3_2
+graf_cual(T_p3_2$Porcentaje, "¿Leyó revistas?")
+```
+
+```{r p3_3}
+T_p3_3 <- tab_cual(JOVENES$p3_3_f)
+T_p3_3
+graf_cual(T_p3_3$Porcentaje, "¿Leyó periódicos?")
+```
+
+```{r p3_4}
+T_p3_4 <- tab_cual(JOVENES$p3_4_f)
+T_p3_4
+graf_cual(T_p3_4$Porcentaje, "¿Leyó historietas?")
+```
+
+```{r p3_5}
+T_p3_5 <- tab_cual(JOVENES$p3_5_f)
+T_p3_5
+graf_cual(T_p3_5$Porcentaje, "¿Leyó en internet?")
+```
+
+### Lectura en formato digital
+
+`Sí` significa que leyó ese material en formato digital (puede haberlo leído también impreso). Solo contestan quienes leyeron el material, por lo que los porcentajes son **entre lectores de ese material**.
+
+```{r digital_libros}
+T_p8 <- tab_cual(JOVENES$p8_1_f)
+T_p8
+graf_cual(T_p8$Porcentaje, "Libros: ¿leyó en formato digital?")
+```
+
+```{r digital_revistas}
+T_p14 <- tab_cual(JOVENES$p14_1_f)
+T_p14
+graf_cual(T_p14$Porcentaje, "Revistas: ¿leyó en formato digital?")
+```
+
+```{r digital_periodicos}
+T_p20 <- tab_cual(JOVENES$p20_1_f)
+T_p20
+graf_cual(T_p20$Porcentaje, "Periódicos: ¿leyó en formato digital?")
+```
+
+```{r digital_historietas}
+T_p23 <- tab_cual(JOVENES$p23_1_f)
+T_p23
+graf_cual(T_p23$Porcentaje, "Historietas: ¿leyó en formato digital?")
+```
+
+### Hábito de lectura (`h_lec`): variable ordinal
+
+Se respeta el orden de las categorías. Además de la tabla se calculan los porcentajes acumulados, la mediana y la categoría donde se alcanza el 50 % de las observaciones.
+
+```{r h_lec}
+T_h <- tab_cual(JOVENES$h_lec_f)
+T_h
+
+# Porcentaje acumulado (muestra)
+T_h$Porcentaje_acumulado <- apply(T_h$Porcentaje, 2, cumsum)
+T_h$Porcentaje_acumulado
+
+# Mediana (código 1 a 4) y su categoría, por año
+mediana_h <- tapply(JOVENES$h_lec, JOVENES$anio_f, median, na.rm = TRUE)
+mediana_h
+levels(JOVENES$h_lec_f)[floor(mediana_h)]
+
+# Primera categoría donde el acumulado llega al 50 %
+apply(T_h$Porcentaje_acumulado, 2,
+      function(p) rownames(T_h$Porcentaje_acumulado)[which(p >= 50)[1]])
+
+graf_cual(T_h$Porcentaje, "Hábito de lectura")
+```
+
+### Condición de persona lectora (`perslec`)
+
+```{r perslec}
+T_pl <- tab_cual(JOVENES$perslec_f)
+T_pl
+graf_cual(T_pl$Porcentaje, "Persona lectora")
+
+# Diagramas de pastel por año
+par(mfrow = c(1, 3))
+for (i in 1:3) {
+  frec <- T_pl$Frecuencia[, i]
+  pie(frec, col = c("#59A14F", "#E15759"),
+      labels = paste0(names(frec), "\n", T_pl$Porcentaje[, i], "%"),
+      main = paste("Lectores", anios[i]))
+}
+par(mfrow = c(1, 1))
+```
+
+# SEGUNDA PARTE: Comparación entre variables
+
+Los archivos de cada año no contienen a las mismas personas, así que las comparaciones describen cambios entre las **poblaciones representadas en cada levantamiento**, no cambios individuales.
+
+## 1. Proporción de jóvenes lectores a través de los años
+
+`Pct` es el porcentaje de la muestra; `Pct_pond` es el porcentaje ponderado con `factor` (estimación para la población); `IC_inf` e `IC_sup` son un intervalo de confianza del 95 % para el porcentaje de la muestra, y sirven para valorar qué tan grandes son las diferencias frente a la variabilidad por muestreo.
+
+```{r prop_lectores}
+# Lectores (cualquier material MOLEC)
+I_lector <- indicador(JOVENES$perslec, valor = 1)
+I_lector
+
+# ¿Acostumbra leer?
+I_acostumbra <- indicador(JOVENES$p2, valor = 1)
+I_acostumbra
+
+# Gráfica: % ponderado de lectores con el intervalo de la muestra
+matplot(anios, I_lector[, c("Pct", "Pct_pond")], type = "b", pch = 19, lty = 1, lwd = 2,
+        col = c("#4E79A7", "#E15759"), xaxt = "n", ylim = c(60, 100),
+        xlab = "Año", ylab = "% de jóvenes lectores", main = "Jóvenes lectores por año")
+axis(1, at = anios)
+arrows(anios, I_lector[, "IC_inf"], anios, I_lector[, "IC_sup"],
+       angle = 90, code = 3, length = 0.05, col = "#4E79A7")
+legend("bottomleft", legend = c("Muestra (con IC 95 %)", "Ponderado"),
+       col = c("#4E79A7", "#E15759"), pch = 19, lty = 1, cex = 0.8, bty = "n")
+```
+
+## 2. Lectores según grupo de edad y año
+
+Los porcentajes se calculan **dentro de cada grupo de edad y año**.
+
+```{r lectores_edad}
+table(JOVENES$grupo_edad, JOVENES$anio_f)   # n por grupo y año
+
+P_edad <- round(100 * tapply(JOVENES$perslec == 1,
+                             list(JOVENES$grupo_edad, JOVENES$anio_f),
+                             mean, na.rm = TRUE), 1)
+P_edad
+
+barplot(P_edad, beside = TRUE, col = c("#8CD17D", "#B6992D"), ylim = c(0, 110),
+        xlab = "Año", ylab = "% de lectores", main = "Lectores por grupo de edad",
+        legend.text = rownames(P_edad), args.legend = list(x = "top", ncol = 2, bty = "n", cex = 0.8))
+
+# Edad de lectores y no lectores (cuantitativa entre categorías)
+medidas_grupos("edad", JOVENES$anio_f, JOVENES$perslec_f)
+boxplot(edad ~ perslec_f + anio_f, data = JOVENES, col = rep(c("#59A14F", "#E15759"), 3),
+        las = 2, cex.axis = 0.7, ylab = "Edad", main = "Edad según condición lectora y año")
+```
+
+## 3. Tipo de material leído a través de los años
+
+Porcentaje de jóvenes que leyó cada tipo de material en los últimos 12 meses.
+
+```{r materiales}
+materiales <- c(Libros = "p3_1", Revistas = "p3_2", Periódicos = "p3_3",
+                Historietas = "p3_4", Internet = "p3_5")
+
+# Filas = materiales, columnas = años
+T_mat <- t(sapply(materiales, function(v) indicador(JOVENES[[v]])[, "Pct"]))
+T_mat
+
+# Barras agrupadas: un grupo por material, una barra por año
+barplot(t(T_mat), beside = TRUE, col = colores, ylim = c(0, 100),
+        ylab = "% de jóvenes", main = "Material leído por año",
+        legend.text = colnames(T_mat), args.legend = list(x = "topright", cex = 0.8, bty = "n"))
+
+# Líneas: cómo cambia cada material en el tiempo
+lineas(t(T_mat), ylab = "% de jóvenes", titulo = "Material leído por año", ylim = c(0, 100))
+```
+
+## 4. Cantidad leída a través de los años
+
+Entre quienes leyeron cada material, ¿cuántos leyeron? (medidas por año; los boxplots por año están en la primera parte).
+
+```{r cantidad_anios}
+cantidades <- c(Libros = "p4", Revistas = "p10", Periódicos = "p16")
+
+# Medianas y medias por año (filas = años, columnas = material)
+Mediana_cant <- sapply(cantidades, function(v) tapply(JOVENES[[v]], JOVENES$anio_f, median, na.rm = TRUE))
+Media_cant   <- sapply(cantidades, function(v) tapply(JOVENES[[v]], JOVENES$anio_f, mean,   na.rm = TRUE))
+DE_cant      <- sapply(cantidades, function(v) tapply(JOVENES[[v]], JOVENES$anio_f, sd,     na.rm = TRUE))
+RIC_cant     <- sapply(cantidades, function(v) tapply(JOVENES[[v]], JOVENES$anio_f, IQR,    na.rm = TRUE))
+
+round(Mediana_cant, 2)
+round(Media_cant, 2)
+round(DE_cant, 2)
+round(RIC_cant, 2)
+
+par(mfrow = c(1, 2))
+lineas(Mediana_cant, ylab = "Mediana", titulo = "Mediana por año")
+lineas(Media_cant,   ylab = "Media",   titulo = "Media por año")
+par(mfrow = c(1, 1))
+```
+
+## 5. Libros leídos según grupo de edad y año
+
+```{r libros_edad}
+medidas_grupos("p4", JOVENES$anio_f, JOVENES$grupo_edad)
+
+boxplot(p4 ~ grupo_edad + anio_f, data = JOVENES, col = rep(colores, each = 2),
+        las = 2, cex.axis = 0.7, ylab = "Libros leídos",
+        main = "Libros leídos por grupo de edad y año")
+
+boxplot(p4 ~ grupo_edad + anio_f, data = JOVENES, col = rep(colores, each = 2),
+        las = 2, cex.axis = 0.7, ylab = "Libros leídos (sin valores extremos)", outline = FALSE,
+        main = "Libros leídos por grupo de edad y año (sin outliers)")
+```
+
+## 6. Minutos continuos de lectura por año, grupo de edad y hábito
+
+```{r minutos}
+medidas_grupos("p26", JOVENES$anio_f)
+medidas_grupos("p26", JOVENES$anio_f, JOVENES$grupo_edad)
+
+boxplot(p26 ~ grupo_edad + anio_f, data = JOVENES, col = rep(colores, each = 2),
+        las = 2, cex.axis = 0.7, ylab = "Minutos continuos",
+        main = "Minutos de lectura por grupo de edad y año")
+
+# Según hábito de lectura (todos los años juntos)
+medidas_grupos("p26", JOVENES$h_lec_f)
+boxplot(p26 ~ h_lec_f, data = JOVENES, col = hcl.colors(4, "Set 2"),
+        las = 2, cex.axis = 0.6, ylab = "Minutos continuos",
+        main = "Minutos de lectura según hábito")
+```
+
+## 7. Formato digital a través de los años
+
+Porcentaje de **lectores de cada material** que lo leyó en formato digital.
+
+```{r digital_anios}
+formatos <- c(Libros = "p8_1", Revistas = "p14_1", Periódicos = "p20_1", Historietas = "p23_1")
+
+# Con intervalo y ponderado, para libros
+indicador(JOVENES$p8_1)
+
+# Filas = materiales, columnas = años
+T_dig <- t(sapply(formatos, function(v) indicador(JOVENES[[v]])[, "Pct"]))
+T_dig
+
+barplot(t(T_dig), beside = TRUE, col = colores, ylim = c(0, 100),
+        ylab = "% de lectores del material", main = "Lectura en formato digital por año",
+        legend.text = colnames(T_dig), args.legend = list(x = "topright", cex = 0.8, bty = "n"))
+
+lineas(t(T_dig), ylab = "% de lectores del material", titulo = "Lectura digital por año",
+       ylim = c(0, 100))
+
+# Libros digitales según grupo de edad y año
+round(100 * tapply(JOVENES$p8_1 == 1, list(JOVENES$grupo_edad, JOVENES$anio_f),
+                   mean, na.rm = TRUE), 1)
+
+# ¿Leen más libros quienes los leen en formato digital? (todos los años juntos)
+medidas_grupos("p4", JOVENES$p8_1_f)
+boxplot(p4 ~ p8_1_f, data = JOVENES, horizontal = TRUE, col = c("#4E79A7", "#F28E2B"),
+        xlab = "Libros leídos", ylab = "¿Leyó en formato digital?",
+        main = "Libros leídos según uso del formato digital")
+```
+
+## 8. Hábito de lectura a través de los años
+
+Dos variables categóricas: porcentajes **dentro de cada año** (cada columna suma 100).
+
+```{r habito_anios}
+T_hab <- tab_cual(JOVENES$h_lec_f)
+T_hab$Frecuencia
+T_hab$Porcentaje
+
+# Barras apiladas al 100 %
+barplot(T_hab$Porcentaje, col = hcl.colors(4, "Set 2"), xlim = c(0, 5.2),
+        xlab = "Año", ylab = "Porcentaje (%)", main = "Hábito de lectura por año",
+        legend.text = rownames(T_hab$Porcentaje),
+        args.legend = list(x = "right", cex = 0.65, bty = "n"))
+
+# Hábito según grupo de edad (porcentajes dentro de cada grupo de edad)
+round(100 * prop.table(table(JOVENES$grupo_edad, JOVENES$h_lec_f), 1), 1)
+```
+
+## 9. Relación entre dos variables categóricas
+
+¿Quienes dicen que acostumbran leer son quienes leyeron libros? Porcentajes calculados **dentro de cada categoría de `p2`** (renglones).
+
+```{r categoricas}
+T_p2_p3 <- table(JOVENES$p2_f, JOVENES$p3_1_f, dnn = c("Acostumbra leer", "Leyó libros"))
+T_p2_p3
+round(100 * prop.table(T_p2_p3, 1), 1)
+
+barplot(100 * prop.table(T_p2_p3, 1), beside = TRUE, col = c("#4E79A7", "#E15759"),
+        ylab = "% dentro de cada grupo de `Acostumbra leer`",
+        xlab = "Leyó libros en los últimos 12 meses",
+        main = "Acostumbra leer y lectura de libros",
+        legend.text = paste("Acostumbra leer:", rownames(T_p2_p3)),
+        args.legend = list(x = "top", cex = 0.8, bty = "n"))
+```
+
+## 10. Relación entre dos variables cuantitativas
+
+Libros leídos y minutos continuos de lectura, por año. Se reportan la correlación de Pearson y la de Spearman (esta última es menos sensible a valores extremos).
+
+```{r cuantitativas}
+par(mfrow = c(1, 3))
+for (i in 1:3) {
+  sub <- subset(JOVENES, anio == anios[i] & !is.na(p4) & !is.na(p26))
+  plot(jitter(sub$p4), jitter(sub$p26), col = colores[i], pch = 19,
+       xlab = "Libros leídos", ylab = "Minutos continuos",
+       main = paste("Año", anios[i]))
+  abline(lm(p26 ~ p4, data = sub), lwd = 2)
+}
+par(mfrow = c(1, 1))
+
+cor_anio <- function(x, y, metodo) {
+  sapply(setNames(anios, anios), function(a) {
+    i <- JOVENES$anio == a
+    cor(JOVENES[[x]][i], JOVENES[[y]][i], use = "complete.obs", method = metodo)
+  })
+}
+
+round(rbind("Libros y minutos (Pearson)"  = cor_anio("p4", "p26", "pearson"),
+            "Libros y minutos (Spearman)" = cor_anio("p4", "p26", "spearman"),
+            "Edad y minutos (Spearman)"   = cor_anio("edad", "p26", "spearman"),
+            "Edad y libros (Spearman)"    = cor_anio("edad", "p4", "spearman")), 2)
+```
+
+## 11. Resumen de cambios 2019 - 2021
+
+Indicadores clave por año y su diferencia respecto a 2019. Los porcentajes están en puntos porcentuales (pp).
+
+```{r resumen}
+pct <- function(v) indicador(JOVENES[[v]])[, "Pct"]
+med <- function(v) tapply(JOVENES[[v]], JOVENES$anio_f, median, na.rm = TRUE)
+
+filas <- rbind(
+  "Lectores, perslec (%)"             = pct("perslec"),
+  "Acostumbra leer, p2 (%)"           = pct("p2"),
+  "Leyó libros (%)"                   = pct("p3_1"),
+  "Leyó revistas (%)"                 = pct("p3_2"),
+  "Leyó periódicos (%)"               = pct("p3_3"),
+  "Leyó historietas (%)"              = pct("p3_4"),
+  "Leyó en internet (%)"              = pct("p3_5"),
+  "Libros en digital, entre lectores (%)"     = pct("p8_1"),
+  "Revistas en digital, entre lectores (%)"   = pct("p14_1"),
+  "Periódicos en digital, entre lectores (%)" = pct("p20_1"),
+  "Libros leídos, mediana"            = med("p4"),
+  "Minutos continuos, mediana"        = med("p26")
+)
+
+cambios <- data.frame(round(filas, 1), check.names = FALSE)
+cambios$"Dif. 2020-2019" <- round(cambios[["2020"]] - cambios[["2019"]], 1)
+cambios$"Dif. 2021-2019" <- round(cambios[["2021"]] - cambios[["2019"]], 1)
+cambios
+```
