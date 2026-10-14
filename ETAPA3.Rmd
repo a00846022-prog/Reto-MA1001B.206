@@ -1,0 +1,219 @@
+---
+title: "Etapa 3 - Análisis Estadístico Inferencial"
+author: "Equipo 1"
+date: "2026-10-14"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(readxl)
+library(ggplot2)
+```
+
+DATOS
+```{r}
+# Carga de la base de datos limpia de la Etapa 2
+JOVENES <- read_excel("BASEDEDATOSLIMPIA.xlsx")
+
+# Renombrado de variables según la Etapa 2
+nombres <- c(
+  Anio_Encuesta             = "anio",
+  Edad                      = "edad",
+  Acostumbra_Leer_p2        = "p2",
+  Leyo_Libros_p3_1          = "p3_1",
+  Leyo_Revistas_p3_2        = "p3_2",
+  Leyo_Periodicos_p3_3      = "p3_3",
+  Leyo_Historietas_p3_4     = "p3_4",
+  Leyo_Internet_p3_5        = "p3_5",
+  Cant_Libros_p4            = "p4",
+  Libro_Digital_p8_1        = "p8_1",
+  Cant_Revistas_p10         = "p10",
+  Revista_Digital_p14_1     = "p14_1",
+  Cant_Periodicos_p16       = "p16",
+  Periodico_Digital_p20_1   = "p20_1",
+  Historieta_Digital_p23_1  = "p23_1",
+  Minutos_Lectura_p26       = "p26",
+  Habito_Lectura_h_lec      = "h_lec",
+  Condicion_Lectora_perslec = "perslec",
+  Factor_Expansion          = "factor"
+)
+
+names(JOVENES) <- nombres[names(JOVENES)]
+
+# Reemplazo de 0s (blancos por pase) por NA
+vars_blanco <- setdiff(names(JOVENES), c("anio", "edad", "factor"))
+for (v in vars_blanco) {
+  JOVENES[[v]][JOVENES[[v]] %in% 0] <- NA
+}
+
+# Parámetros Inferenciales Globales (Nivel de significancia = 0.04)
+ALPHA <- 0.04
+CONF_LEVEL <- 1 - ALPHA
+```
+
+INTERVALOS DE CONFIANZA
+```{r}
+# Subconjuntos por año
+jovenes_2019 <- subset(JOVENES, anio == 2019)
+jovenes_2021 <- subset(JOVENES, anio == 2021)
+
+# --- IC 1: Proporción de Lectura Digital de Libros en 2019 (1 población) ---
+# p8_1 == 1 indica lectura en formato digital
+x_dig19 <- sum(jovenes_2019$p8_1 == 1, na.rm = TRUE)
+n_dig19 <- sum(!is.na(jovenes_2019$p8_1))
+ic1_prop19 <- prop.test(x_dig19, n_dig19, conf.level = CONF_LEVEL)
+
+# --- IC 2: Proporción de Lectura Digital de Libros en 2021 (1 población) ---
+x_dig21 <- sum(jovenes_2021$p8_1 == 1, na.rm = TRUE)
+n_dig21 <- sum(!is.na(jovenes_2021$p8_1))
+ic2_prop21 <- prop.test(x_dig21, n_dig21, conf.level = CONF_LEVEL)
+
+# --- IC 3: Promedio (Media) de Libros Leídos en 2021 (1 población) ---
+ic3_media_libros21 <- t.test(jovenes_2021$p4, conf.level = CONF_LEVEL)
+
+# --- IC 4: Diferencia de Proporciones de Lectura Digital (2021 vs 2019) (2 poblaciones) ---
+ic4_dif_prop <- prop.test(c(x_dig21, x_dig19), c(n_dig21, n_dig19), conf.level = CONF_LEVEL)
+
+# Resumen de Intervalos
+resumen_ic <- data.frame(
+  Indicador = c("Prop. Digital 2019 (p8_1)", "Prop. Digital 2021 (p8_1)", 
+                "Media Libros 2021 (p4)", "Dif. Proporciones (2021 - 2019)"),
+  Estimacion = c(ic1_prop19$estimate, ic2_prop21$estimate, 
+                 ic3_media_libros21$estimate, ic4_dif_prop$estimate[1] - ic4_dif_prop$estimate[2]),
+  IC_Inferior_96 = c(ic1_prop19$conf.int[1], ic2_prop21$conf.int[1], 
+                     ic3_media_libros21$conf.int[1], ic4_dif_prop$conf.int[1]),
+  IC_Superior_96 = c(ic1_prop19$conf.int[2], ic2_prop21$conf.int[2], 
+                     ic3_media_libros21$conf.int[2], ic4_dif_prop$conf.int[2])
+)
+```
+
+VERIFICACION DE SUPUESTOS
+```{r}
+# Verificación de Normalidad para 'Libros Leídos' (p4) en 2019 y 2021
+shapiro_19 <- shapiro.test(jovenes_2019$p4) 
+shapiro_21 <- shapiro.test(jovenes_2021$p4)
+
+supuestos_res <- data.frame(
+  Año = c(2019, 2021),
+  Prueba = "Shapiro-Wilk",
+  Estadistico_W = c(shapiro_19$statistic, shapiro_21$statistic),
+  p_value = c(shapiro_19$p.value, shapiro_21$p.value),
+  Normalidad = c(shapiro_19$p.value > ALPHA, shapiro_21$p.value > ALPHA)
+)
+supuestos_res
+```
+
+PRUEBAS DE HIPÓTESIS
+```{r}
+# ==============================================================================
+# PRUEBAS DE HIPÓTESIS SOLICITADAS (alpha = 0.04)
+# ==============================================================================
+ALPHA <- 0.04
+CONF_LEVEL <- 1 - ALPHA
+
+# Subconjuntos por año
+jovenes_2019 <- subset(JOVENES, anio == 2019)
+jovenes_2021 <- subset(JOVENES, anio == 2021)
+
+# ------------------------------------------------------------------------------
+# PRUEBA 1: Chi-cuadrada de Independencia 4x2 en 2021
+# Objetivo: Comprobar si el grado de adopción digital depende del tipo de material.
+# Variables: Material (Libros, Revistas, Periódicos, Historietas) x Lectura Digital (Sí / No)
+# ------------------------------------------------------------------------------
+# Conteo de lectores digitales (Sí/No) por material en 2021
+mat_dig_2021 <- matrix(
+  c(
+    sum(jovenes_2021$p8_1 == 1, na.rm=T),  sum(jovenes_2021$p8_1 == 2, na.rm=T),  # Libros
+    sum(jovenes_2021$p14_1 == 1, na.rm=T), sum(jovenes_2021$p14_1 == 2, na.rm=T), # Revistas
+    sum(jovenes_2021$p20_1 == 1, na.rm=T), sum(jovenes_2021$p20_1 == 2, na.rm=T), # Periódicos
+    sum(jovenes_2021$p23_1 == 1, na.rm=T), sum(jovenes_2021$p23_1 == 2, na.rm=T)  # Historietas
+  ),
+  nrow = 4, byrow = TRUE,
+  dimnames = list(
+    Material = c("Libros", "Revistas", "Periódicos", "Historietas"),
+    Digital  = c("Sí", "No")
+  )
+)
+
+ph1_res <- chisq.test(mat_dig_2021)
+df_ph1   <- ph1_res$parameter
+stat_ph1 <- ph1_res$statistic
+crit_ph1 <- qchisq(1 - ALPHA, df = df_ph1)
+
+cat("\n======================================================\n")
+cat("PRUEBA 1: Chi-cuadrada 4x2 de Independencia (2021)\n")
+cat("======================================================\n")
+print(mat_dig_2021)
+cat("Estadístico Chi^2:", round(stat_ph1, 4), "\n")
+cat("Grados de libertad:", df_ph1, "\n")
+cat("Valor crítico (alpha = 0.04):", round(crit_ph1, 4), "\n")
+cat("p-value:", ph1_res$p.value, "\n")
+cat("Conclusión:", ifelse(stat_ph1 > crit_ph1, "Se rechaza H0 (Dependientes)", "No se rechaza H0"), "\n")
+
+
+# ------------------------------------------------------------------------------
+# PRUEBA 2: Chi-cuadrada para Periódicos 2019 vs 2021
+# Objetivo: Demostrar si el salto en la digitalización en periódicos fue significativo.
+# Variables: Año (2019 vs 2021) x Periódico Digital (Sí / No)
+# ------------------------------------------------------------------------------
+peri_dig_19_21 <- matrix(
+  c(
+    sum(jovenes_2019$p20_1 == 1, na.rm=T), sum(jovenes_2019$p20_1 == 2, na.rm=T), # 2019
+    sum(jovenes_2021$p20_1 == 1, na.rm=T), sum(jovenes_2021$p20_1 == 2, na.rm=T)  # 2021
+  ),
+  nrow = 2, byrow = TRUE,
+  dimnames = list(
+    Anio    = c("2019", "2021"),
+    Digital = c("Sí", "No")
+  )
+)
+
+ph2_res <- chisq.test(peri_dig_19_21)
+df_ph2   <- ph2_res$parameter
+stat_ph2 <- ph2_res$statistic
+crit_ph2 <- qchisq(1 - ALPHA, df = df_ph2)
+
+cat("\n======================================================\n")
+cat("PRUEBA 2: Chi-cuadrada Periódicos Digitales (2019 vs 2021)\n")
+cat("======================================================\n")
+print(peri_dig_19_21)
+cat("Estadístico Chi^2:", round(stat_ph2, 4), "\n")
+cat("Grados de libertad:", df_ph2, "\n")
+cat("Valor crítico (alpha = 0.04):", round(crit_ph2, 4), "\n")
+cat("p-value:", ph2_res$p.value, "\n")
+cat("Conclusión:", ifelse(stat
+```
+
+GRAFICOS INFERENCIALES
+```{r}
+# Gráfico 1: Proporción de lectura digital con Intervalos de Confianza al 96%
+df_plot_prop <- data.frame(
+  Año = c("2019", "2021"),
+  Proporcion = c(ic1_prop19$estimate, ic2_prop21$estimate),
+  Inf_IC = c(ic1_prop19$conf.int[1], ic2_prop21$conf.int[1]),
+  Sup_IC = c(ic1_prop19$conf.int[2], ic2_prop21$conf.int[2])
+)
+
+ggplot(df_plot_prop, aes(x = Año, y = Proporcion, fill = Año)) +
+  geom_bar(stat = "identity", width = 0.4, alpha = 0.8) +
+  geom_errorbar(aes(ymin = Inf_IC, ymax = Sup_IC), width = 0.15, linewidth = 0.8) +
+  scale_fill_manual(values = c("#4E79A7", "#59A14F")) +
+  labs(title = "Proporción de Lectura Digital de Libros (IC del 96%)",
+       subtitle = "Comparación entre 2019 y 2021 en jóvenes de 18-25 años",
+       y = "Proporción de lectores", x = "Año de Encuesta") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Gráfico 2: Comparación de medias de libros leídos (2019 vs 2021)
+ggplot(subset(JOVENES, anio %in% c(2019, 2021) & !is.na(p4)), 
+       aes(x = factor(anio), y = p4, fill = factor(anio))) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outline = FALSE) +
+  scale_fill_manual(values = c("#4E79A7", "#59A14F")) +
+  labs(title = "Distribución del Número de Libros Leídos (p4)",
+       subtitle = "Evaluación de la diferencia de medias (2019 vs 2021)",
+       x = "Año", y = "Libros leídos (sin outliers)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
